@@ -1,0 +1,16 @@
+# macOS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Build files
+/build/
+/cmake-build-*/
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
