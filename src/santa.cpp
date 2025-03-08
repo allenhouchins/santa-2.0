@@ -6,6 +6,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <zlib.h>
 
 #include <osquery/logger/logger.h>
 
@@ -106,13 +107,34 @@ void scrapeCurrentLog(LogEntries& response, SantaDecisionType decision) {
   log_file.close();
 }
 
-// Simplified implementation that doesn't use gzip
+// Boost was fighting me, so we switched to  zlib and it works, so....
 bool scrapeCompressedSantaLog(std::string file_path,
-                              LogEntries& response,
-                              SantaDecisionType decision) {
-  LOG(WARNING) << "Compressed log file support is disabled: " << file_path;
-  // We're skipping compressed files in this simplified version
-  return false;
+  LogEntries& response,
+  SantaDecisionType decision) {
+gzFile file = gzopen(file_path.c_str(), "rb");
+if (!file) {
+LOG(WARNING) << "Failed to open compressed file: " << file_path;
+return false;
+}
+
+// Create a buffer to read into
+const int buffer_size = 16384;
+char buffer[buffer_size];
+std::string uncompressed_data;
+
+// Read and decompress data
+int bytes_read;
+while ((bytes_read = gzread(file, buffer, buffer_size)) > 0) {
+uncompressed_data.append(buffer, bytes_read);
+}
+
+gzclose(file);
+
+// Process the uncompressed data
+std::istringstream stream(uncompressed_data);
+scrapeStream(stream, response, true, decision);
+
+return true;
 }
 
 bool newArchiveFileExists() {
