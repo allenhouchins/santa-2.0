@@ -183,7 +183,7 @@ static int rulesCallback(void* context,
   }
 
   RuleEntry new_rule;
-  new_rule.shasum = argv[0];
+  new_rule.shasum = argv[0]; // Using identifier column
   new_rule.state = (argv[1][0] == '1') ? RuleEntry::State::Whitelist
                                        : RuleEntry::State::Blacklist;
 
@@ -230,7 +230,7 @@ bool collectSantaRules(RuleEntries& response) {
   // Note: Santa calls its column 'custommsg', but following osquery convention
   // our column is called 'custom_message'.
   rc = sqlite3_exec(db,
-                    "SELECT shasum, state, type, custommsg FROM rules;",
+                    "SELECT identifier, state, type, custommsg FROM rules;",
                     rulesCallback,
                     &response,
                     &sqlite_error_message);
