@@ -7,6 +7,8 @@ This extension allows osquery to interact with Santa binary authorization system
 The extension uses osquery's SDK headers and libraries.
 The extension cannot be built standalone without the osquery source code. The build process integrates with osquery's build system to properly link against the required dependencies and produce a compatible extension binary.
 
+If you don't care about building from scratch and just want the exension to load, that's also in the repo to grab. The most current version, `external_extension_santa_updated_zlib.ext` updated the function for compressed files. This enables `select * from santa_denied;` to pull historical data. Extension built on arm64.
+
 ## Features
 
 - Query Santa rules through the `santa_rules` table
@@ -14,6 +16,7 @@ The extension cannot be built standalone without the osquery source code. The bu
 - Query denied decisions through the `santa_denied` table
 
 ## Prerequisites
+
 - Follow [the guide](https://osquery.readthedocs.io/en/stable/development/building/) listed on osquery's official site and install necessary prerequisites.
 
 ## Setting up to build
