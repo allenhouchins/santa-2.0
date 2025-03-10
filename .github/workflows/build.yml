@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:
 
 jobs:
   build:
@@ -28,13 +28,22 @@ jobs:
       - name: Install dependencies
         run: |
           cd osquery
-          brew install cmake python openssl zlib
-          python3 -m pip install setuptools pyyaml
+          brew install cmake openssl zlib
+          # Create a virtual environment for Python dependencies
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install setuptools pyyaml
 
       - name: Build extension
         run: |
           cd osquery
-          mkdir build && cd build
+          source venv/bin/activate
+          # Set environment variables for zlib
+          export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
+          export CPPFLAGS="-I/opt/homebrew/opt/zlib/include"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/zlib/lib/pkgconfig"
+          # Build
+          mkdir -p build && cd build
           cmake ..
           cmake --build . --target external_extension_santa -j3
 
