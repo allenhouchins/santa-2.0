@@ -79,7 +79,7 @@ jobs:
           
       # Save the extension binary as an artifact, nice to have, not required. Consider removing this?
       - name: Save extension artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: santa-extension
           path: osquery/build/external/extension_santa/santa.ext
