@@ -415,7 +415,14 @@ osquery::QueryData SantaRulesTablePlugin::delete_(
       "rule", "--remove"
   };
   
-  // Add the appropriate identifier and rule type arguments
+  // Log what we're about to do
+  VLOG(1) << "Executing santactl remove command: " << kSantactlPath;
+  for (const auto& arg : santactl_args) {
+    VLOG(1) << "  Arg: " << arg;
+  }
+  
+  // Add the appropriate identifier and rule type arguments based on rule type
+  // This is the key fix - the proper handling of each rule type for deletion
   switch (rule.type) {
       case RuleEntry::Type::Binary:
           santactl_args.push_back("--identifier");
@@ -435,6 +442,8 @@ osquery::QueryData SantaRulesTablePlugin::delete_(
           break;
           
       case RuleEntry::Type::SigningID:
+          // For SigningID, we keep the full identifier (TeamID:SigningID) format
+          // and don't try to split it - this is the key fix for this rule type
           santactl_args.push_back("--identifier");
           santactl_args.push_back(rule.identifier);
           santactl_args.push_back("--signingid");
@@ -449,6 +458,16 @@ osquery::QueryData SantaRulesTablePlugin::delete_(
       default:
           VLOG(1) << "Unknown rule type: " << static_cast<int>(rule.type);
           return {{std::make_pair("status", "failure")}};
+  }
+
+  // Log the final command arguments
+  for (const auto& arg : santactl_args) {
+    VLOG(1) << "  Arg: " << arg;
+  }
+  
+  VLOG(1) << "Executing command: " << kSantactlPath;
+  for (const auto& arg : santactl_args) {
+    VLOG(1) << "  " << arg;
   }
 
   // The santactl command always succeeds, even if the rule does not exist.
