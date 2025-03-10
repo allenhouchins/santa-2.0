@@ -1,7 +1,7 @@
 #include "santarulestable.h"
 
 #include <atomic>
-#include <fstream>  // Add this for std::ifstream
+#include <fstream>
 #include <mutex>
 
 #include <osquery/logger/logger.h>
@@ -87,7 +87,9 @@ osquery::Status SantaRulesTablePlugin::GetRowData(
   }
 
   row["state"] = document[1].GetString();
-  if (row["state"] != "whitelist" && row["state"] != "blacklist") {
+  // Update to accept both old and new terminology
+  if (row["state"] != "whitelist" && row["state"] != "blacklist" && 
+      row["state"] != "allow" && row["state"] != "block") {
     VLOG(1) << "Invalid state: " << row["state"];
     return osquery::Status(1, "Invalid 'state' value");
   }
@@ -192,15 +194,19 @@ osquery::QueryData SantaRulesTablePlugin::insert(
     return {{std::make_pair("status", "failure")}};
   }
 
-  bool whitelist = row["state"] == "whitelist";
+  // Support both old and new syntax
+  bool whitelist = (row["state"] == "whitelist" || row["state"] == "allow");
   bool certificate = row["type"] == "certificate";
   const auto& identifier = row.at("identifier");
   const auto& custom_message = row.at("custom_message");
 
+  // Map the state name to the santactl command argument
+  std::string state_arg = whitelist ? "--allow" : "--block";
+
   // Log the santactl command we're about to run
   VLOG(1) << "Running santactl command with args: " 
           << "rule " 
-          << (whitelist ? "--whitelist" : "--blacklist")
+          << state_arg
           << " --sha256 " << identifier
           << " --message \"" << custom_message << "\"" 
           << (certificate ? " --certificate" : "");
@@ -213,10 +219,10 @@ osquery::QueryData SantaRulesTablePlugin::insert(
              std::make_pair("message", "santactl not found")}};
   }
 
-  // Build command for santactl
+  // Build command for santactl using the newer --allow/--block syntax
   std::vector<std::string> santactl_args = {
       "rule",
-      whitelist ? "--whitelist" : "--blacklist",
+      state_arg,  // Use --allow or --block instead of --whitelist/--blacklist
       "--sha256",
       identifier};
   

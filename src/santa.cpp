@@ -369,10 +369,10 @@ const char* getRuleTypeName(RuleEntry::Type type) {
 const char* getRuleStateName(RuleEntry::State state) {
   switch (state) {
   case RuleEntry::State::Whitelist:
-    return "whitelist";
+    return "allow";  // Updated from "whitelist" to "allow"
 
   case RuleEntry::State::Blacklist:
-    return "blacklist";
+    return "block";  // Updated from "blacklist" to "block" 
 
   case RuleEntry::State::Unknown:
   default:
@@ -395,9 +395,10 @@ RuleEntry::Type getTypeFromRuleName(const char* name) {
 RuleEntry::State getStateFromRuleName(const char* name) {
   std::string state_name(name);
 
-  if (state_name == "blacklist") {
+  // Support both old and new terminology
+  if (state_name == "blacklist" || state_name == "block") {
     return RuleEntry::State::Blacklist;
-  } else if (state_name == "whitelist") {
+  } else if (state_name == "whitelist" || state_name == "allow") {
     return RuleEntry::State::Whitelist;
   } else {
     return RuleEntry::State::Unknown;
