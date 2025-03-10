@@ -1,4 +1,4 @@
-name: Build Santa Extension
+name: Build Santa Extension - arm64, x86_64, universal
 
 on:
   #push:
@@ -38,14 +38,23 @@ jobs:
         run: |
           git clone https://github.com/osquery/osquery.git
 
-      # Cache osquery build directory cuz there is a lot here
-      - name: Cache osquery build
+      # Cache ARM64 build directory
+      - name: Cache osquery arm64 build
         uses: actions/cache@v3
         with:
-          path: osquery/build
-          key: ${{ runner.os }}-osquery-build-${{ hashFiles('osquery-santa-extension/src/*', 'osquery-santa-extension/CMakeLists.txt', 'osquery/CMakeLists.txt') }}
+          path: osquery/build_arm64
+          key: ${{ runner.os }}-osquery-build-arm64-${{ hashFiles('osquery-santa-extension/src/*', 'osquery-santa-extension/CMakeLists.txt', 'osquery/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-osquery-build-
+            ${{ runner.os }}-osquery-build-arm64-
+
+      # Cache x86_64 build directory
+      - name: Cache osquery x86_64 build
+        uses: actions/cache@v3
+        with:
+          path: osquery/build_x86_64
+          key: ${{ runner.os }}-osquery-build-x86_64-${{ hashFiles('osquery-santa-extension/src/*', 'osquery-santa-extension/CMakeLists.txt', 'osquery/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-osquery-build-x86_64-
 
       - name: Setup extension in osquery
         run: |
@@ -62,8 +71,8 @@ jobs:
           source venv/bin/activate
           pip install setuptools pyyaml
 
-      # Will take a good chunk of time on first build, or if not cached
-      - name: Build extension
+      # Build for ARM64 - remove zlib and openssl from the cache? TODO
+      - name: Build ARM64 extension
         run: |
           cd osquery
           # Activate the virtual environment
@@ -72,38 +81,59 @@ jobs:
           export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
           export CPPFLAGS="-I/opt/homebrew/opt/zlib/include"
           export PKG_CONFIG_PATH="/opt/homebrew/opt/zlib/lib/pkgconfig"
-          # Build
-          mkdir -p build && cd build
-          cmake ..
+          # Build for ARM64
+          mkdir -p build_arm64 && cd build_arm64
+          cmake -DCMAKE_OSX_ARCHITECTURES=arm64 ..
           cmake --build . --target santa -j3
           
-      # Save the extension binary as an artifact, nice to have, not required. Consider removing this?
-      - name: Save extension artifact
+      # Build for x86
+      - name: Build x86_64 extension
+        run: |
+          cd osquery
+          # Activate the virtual environment
+          source venv/bin/activate
+          # Set environment variables for zlib
+          export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
+          export CPPFLAGS="-I/opt/homebrew/opt/zlib/include"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/zlib/lib/pkgconfig"
+          # Build for x86_64
+          mkdir -p build_x86_64 && cd build_x86_64
+          cmake -DCMAKE_OSX_ARCHITECTURES=x86_64 ..
+          cmake --build . --target santa -j3
+      
+      # Create universal binary w/ lipo
+      - name: Create Universal Binary
+        run: |
+          mkdir -p binaries
+          cp osquery/build_arm64/external/extension_santa/santa.ext ./binaries/santa_arm64.ext
+          cp osquery/build_x86_64/external/extension_santa/santa.ext ./binaries/santa_x86_64.ext
+          lipo -create binaries/santa_arm64.ext binaries/santa_x86_64.ext -output ./binaries/santa_universal.ext
+          
+      # Save all binaries as artifacts
+      - name: Save extension artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: santa-extension
-          path: osquery/build/external/extension_santa/santa.ext
+          name: santa-extensions
+          path: binaries/*
           
-      # Copy extension to root for release - makes accessible to the GitHub Release action with a simple path at root
-      - name: Prepare extension for release
-        run: |
-          cp osquery/build/external/extension_santa/santa.ext ./santa_arm64.ext
-          
-      # Get current date for release naming
-      - name: Get current date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-          
-      # Create or update "latest" GitHub release, not messing with version tagging 
+      # Create or update "latest" GitHub release with all binaries
       - name: Update Latest Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: latest
-          name: "santa.ext (${{ steps.date.outputs.date }})"
+          name: "santa.ext"
           files: |
-            santa_arm64.ext
+            binaries/santa_arm64.ext
+            binaries/santa_x86_64.ext
+            binaries/santa_universal.ext
           draft: false
           prerelease: false
-          body: "This is the latest build of the Santa extension for osquery, built on ${{ steps.date.outputs.date }}"
+          body: |
+            This is the latest build of the Santa extension for osquery.
+            
+            ## Binaries:
+            - `santa_arm64.ext`: For Apple Silicon Macs
+            - `santa_x86_64.ext`: For Intel Macs
+            - `santa_universal.ext`: Universal binary that works on both architectures
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
