@@ -1,0 +1,45 @@
+name: Build Santa Extension
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          path: extension_santa
+
+      - name: Clone osquery repository
+        run: |
+          git clone https://github.com/osquery/osquery.git
+
+      - name: Setup extension in osquery
+        run: |
+          mkdir -p osquery/external/extension_santa/src
+          cp -r extension_santa/src/* osquery/external/extension_santa/src/
+          cp extension_santa/CMakeLists.txt osquery/external/extension_santa/
+
+      - name: Install dependencies
+        run: |
+          cd osquery
+          brew install cmake python openssl zlib
+          python3 -m pip install setuptools pyyaml
+
+      - name: Build extension
+        run: |
+          cd osquery
+          mkdir build && cd build
+          cmake ..
+          cmake --build . --target external_extension_santa -j3
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: santa-extension
+          path: osquery/build/external/extension_santa/external_extension_santa.ext
