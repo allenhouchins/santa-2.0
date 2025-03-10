@@ -1,4 +1,3 @@
-
 #include "santa.h"
 
 #include <fstream>
@@ -107,34 +106,48 @@ void scrapeCurrentLog(LogEntries& response, SantaDecisionType decision) {
   log_file.close();
 }
 
-// Boost was fighting me, so we switched to  zlib and it works, so....
+// Implementation using zlib to handle compressed log files
 bool scrapeCompressedSantaLog(std::string file_path,
-  LogEntries& response,
-  SantaDecisionType decision) {
-gzFile file = gzopen(file_path.c_str(), "rb");
-if (!file) {
-LOG(WARNING) << "Failed to open compressed file: " << file_path;
-return false;
-}
+                              LogEntries& response,
+                              SantaDecisionType decision) {
+  gzFile gzfile = gzopen(file_path.c_str(), "rb");
+  if (!gzfile) {
+    VLOG(1) << "Failed to open compressed log file: " << file_path;
+    return false;
+  }
 
-// Create a buffer to read into
-const int buffer_size = 16384;
-char buffer[buffer_size];
-std::string uncompressed_data;
-
-// Read and decompress data
-int bytes_read;
-while ((bytes_read = gzread(file, buffer, buffer_size)) > 0) {
-uncompressed_data.append(buffer, bytes_read);
-}
-
-gzclose(file);
-
-// Process the uncompressed data
-std::istringstream stream(uncompressed_data);
-scrapeStream(stream, response, true, decision);
-
-return true;
+  try {
+    char buffer[8192];
+    std::stringstream decompressed_content;
+    
+    int num_read = 0;
+    while ((num_read = gzread(gzfile, buffer, sizeof(buffer))) > 0) {
+      decompressed_content.write(buffer, num_read);
+    }
+    
+    // Check for errors
+    int err;
+    const char* error_string = gzerror(gzfile, &err);
+    if (err != Z_OK && err != Z_STREAM_END) {
+      VLOG(1) << "Error decompressing file: " << error_string;
+      gzclose(gzfile);
+      return false;
+    }
+    
+    // Close the file
+    gzclose(gzfile);
+    
+    // Process the decompressed content
+    std::istringstream stream(decompressed_content.str());
+    scrapeStream(stream, response, true, decision);
+    
+    VLOG(1) << "Successfully processed compressed log file: " << file_path;
+    return true;
+  } catch (const std::exception& e) {
+    VLOG(1) << "Failed to decompress log file: " << e.what();
+    gzclose(gzfile);
+    return false;
+  }
 }
 
 bool newArchiveFileExists() {
@@ -194,8 +207,8 @@ static int rulesCallback(void* context,
   // clang-format off
 
   // Expected argc/argv format:
-  //     shasum,           state,        type, custom_message
-  //     shasum, white/blacklist, binary/cert, arbitrary text
+  //     identifier,       state,        type, custom_message
+  //     identifier, white/blacklist,  ruletype, arbitrary text
 
   // clang-format on
 
@@ -204,15 +217,53 @@ static int rulesCallback(void* context,
     return 0;
   }
 
+  // Log what we receive for debugging
+  VLOG(1) << "Rule callback received - identifier: " << (argv[0] ? argv[0] : "NULL") 
+          << ", state: " << (argv[1] ? argv[1] : "NULL")
+          << ", type: " << (argv[2] ? argv[2] : "NULL")
+          << ", message: " << (argv[3] ? argv[3] : "NULL");
+
   RuleEntry new_rule;
-  new_rule.shasum = argv[0]; // Using identifier column
+  new_rule.identifier = argv[0]; // Using identifier column
   new_rule.state = (argv[1][0] == '1') ? RuleEntry::State::Whitelist
                                        : RuleEntry::State::Blacklist;
 
-  new_rule.type = (argv[2][0] == '1') ? RuleEntry::Type::Binary
-                                      : RuleEntry::Type::Certificate;
+  // Parse the type from the integer value
+  int type_val = argv[2] ? std::atoi(argv[2]) : 0;
+  VLOG(1) << "Rule type value from DB: " << type_val;
+
+  // Map Santa database type values to our enum
+  // Santa's rule database uses these values based on the logs:
+  // 1000: Binary, 2000: Certificate, 3000: SigningID, 4000: TeamID, 500: CDHash
+  switch(type_val) {
+    case 1000:
+      new_rule.type = RuleEntry::Type::Binary;
+      break;
+    case 2000:
+      new_rule.type = RuleEntry::Type::Certificate;
+      break;
+    case 3000:
+      new_rule.type = RuleEntry::Type::SigningID;
+      break;
+    case 4000:
+      new_rule.type = RuleEntry::Type::TeamID;
+      break;
+    case 500:  // CDHash is 500, not 5000 as we initially assumed
+      new_rule.type = RuleEntry::Type::CDHash;
+      break;
+    default:
+      VLOG(1) << "Unknown rule type value: " << type_val;
+      new_rule.type = RuleEntry::Type::Unknown;
+      break;
+  }
 
   new_rule.custom_message = (argv[3] == nullptr) ? "" : argv[3];
+
+  // Print what we've interpreted
+  VLOG(1) << "Interpreted rule - identifier: " << new_rule.identifier
+          << ", state: " << (new_rule.state == RuleEntry::State::Whitelist ? "whitelist" : "blacklist")
+          << ", type: " << getRuleTypeName(new_rule.type)
+          << ", message: " << new_rule.custom_message;
 
   rules->push_back(std::move(new_rule));
   return 0;
@@ -221,10 +272,13 @@ static int rulesCallback(void* context,
 bool collectSantaRules(RuleEntries& response) {
   response.clear();
 
+  // Verbose logging to track progress
+  VLOG(1) << "Attempting to collect Santa rules from database: " << kSantaDatabasePath;
+
   // make a copy of the rules db (santa keeps the db locked)
   std::ifstream src(kSantaDatabasePath, std::ios_base::binary);
   if (!src.is_open()) {
-    VLOG(1) << "Failed to access the Santa rule database";
+    VLOG(1) << "Failed to access the Santa rule database at: " << kSantaDatabasePath;
     return false;
   }
 
@@ -232,7 +286,7 @@ bool collectSantaRules(RuleEntries& response) {
                     std::ios_base::binary | std::ios_base::trunc);
 
   if (!dst.is_open()) {
-    VLOG(1) << "Failed to duplicate the Santa rule database";
+    VLOG(1) << "Failed to create temporary database at: " << kTemporaryDatabasePath;
     return false;
   }
 
@@ -244,22 +298,83 @@ bool collectSantaRules(RuleEntries& response) {
   sqlite3* db;
   int rc = sqlite3_open(kTemporaryDatabasePath.c_str(), &db);
   if (SQLITE_OK != rc) {
-    VLOG(1) << "Failed to read Santa rule database";
+    VLOG(1) << "Failed to open the temporary Santa rule database: " 
+            << sqlite3_errmsg(db);
     return false;
   }
 
+  // First, check the database schema to see what columns are available
+  char* schema_error = nullptr;
+  char** schema_results = nullptr;
+  int rows, cols;
+  
+  VLOG(1) << "Querying database schema...";
+  rc = sqlite3_get_table(
+      db,
+      "PRAGMA table_info(rules);",
+      &schema_results,
+      &rows,
+      &cols,
+      &schema_error);
+  
+  if (rc != SQLITE_OK) {
+    VLOG(1) << "Failed to query schema: " 
+            << (schema_error ? schema_error : "unknown error");
+    if (schema_error) {
+      sqlite3_free(schema_error);
+    }
+    sqlite3_close(db);
+    return false;
+  }
+  
+  // Log the schema
+  VLOG(1) << "Rules table has " << rows << " columns:";
+  bool has_identifier = false;
+  bool has_shasum = false;
+  std::string id_column = "identifier"; // Default to 'identifier'
+  
+  for (int i = 1; i <= rows; i++) {
+    // Column name is at index 1 in each row
+    std::string column_name = schema_results[i * cols + 1];
+    VLOG(1) << "Column: " << column_name;
+    
+    if (column_name == "identifier") {
+      has_identifier = true;
+    } else if (column_name == "shasum") {
+      has_shasum = true;
+    }
+  }
+  
+  // Free schema results
+  sqlite3_free_table(schema_results);
+  
+  // Determine which column to use for the rule identifier
+  if (has_identifier) {
+    id_column = "identifier";
+    VLOG(1) << "Using 'identifier' column for rule identifier";
+  } else if (has_shasum) {
+    id_column = "shasum";
+    VLOG(1) << "Using 'shasum' column for rule identifier";
+  } else {
+    VLOG(1) << "Could not find a valid identifier column in the schema";
+    sqlite3_close(db);
+    return false;
+  }
+
+  // Construct the query dynamically based on available columns
+  std::string query = "SELECT " + id_column + ", state, type, custommsg FROM rules;";
+  VLOG(1) << "Executing query: " << query;
+  
   char* sqlite_error_message = nullptr;
-  // Note: Santa calls its column 'custommsg', but following osquery convention
-  // our column is called 'custom_message'.
   rc = sqlite3_exec(db,
-                    "SELECT identifier, state, type, custommsg FROM rules;",
+                    query.c_str(),
                     rulesCallback,
                     &response,
                     &sqlite_error_message);
 
   if (rc != SQLITE_OK) {
     VLOG(1) << "Failed to query the Santa rule database: "
-            << (sqlite_error_message != nullptr ? sqlite_error_message : "");
+            << (sqlite_error_message != nullptr ? sqlite_error_message : "unknown error");
   }
 
   if (sqlite_error_message != nullptr) {
@@ -270,6 +385,8 @@ bool collectSantaRules(RuleEntries& response) {
   if (rc != SQLITE_OK) {
     VLOG(1) << "Failed to close the Santa rule database";
   }
+  
+  VLOG(1) << "Collected " << response.size() << " rules from Santa database";
   return (rc == SQLITE_OK);
 }
 
@@ -280,6 +397,15 @@ const char* getRuleTypeName(RuleEntry::Type type) {
 
   case RuleEntry::Type::Certificate:
     return "certificate";
+    
+  case RuleEntry::Type::TeamID:
+    return "teamid";
+    
+  case RuleEntry::Type::SigningID:
+    return "signingid";
+    
+  case RuleEntry::Type::CDHash:
+    return "cdhash";
 
   case RuleEntry::Type::Unknown:
   default:
@@ -290,10 +416,10 @@ const char* getRuleTypeName(RuleEntry::Type type) {
 const char* getRuleStateName(RuleEntry::State state) {
   switch (state) {
   case RuleEntry::State::Whitelist:
-    return "whitelist";
+    return "allow";  // Updated from "whitelist" to "allow"
 
   case RuleEntry::State::Blacklist:
-    return "blacklist";
+    return "block";  // Updated from "blacklist" to "block" 
 
   case RuleEntry::State::Unknown:
   default:
@@ -308,6 +434,12 @@ RuleEntry::Type getTypeFromRuleName(const char* name) {
     return RuleEntry::Type::Certificate;
   } else if (type_name == "binary") {
     return RuleEntry::Type::Binary;
+  } else if (type_name == "teamid") {
+    return RuleEntry::Type::TeamID;
+  } else if (type_name == "signingid") {
+    return RuleEntry::Type::SigningID;
+  } else if (type_name == "cdhash") {
+    return RuleEntry::Type::CDHash;
   } else {
     return RuleEntry::Type::Unknown;
   }
@@ -316,9 +448,10 @@ RuleEntry::Type getTypeFromRuleName(const char* name) {
 RuleEntry::State getStateFromRuleName(const char* name) {
   std::string state_name(name);
 
-  if (state_name == "blacklist") {
+  // Support both old and new terminology
+  if (state_name == "blacklist" || state_name == "block") {
     return RuleEntry::State::Blacklist;
-  } else if (state_name == "whitelist") {
+  } else if (state_name == "whitelist" || state_name == "allow") {
     return RuleEntry::State::Whitelist;
   } else {
     return RuleEntry::State::Unknown;

@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <list>
@@ -17,12 +16,20 @@ struct LogEntry final {
 };
 
 struct RuleEntry final {
-  enum class Type { Binary, Certificate, Unknown };
+  enum class Type { 
+    Binary, 
+    Certificate, 
+    TeamID,
+    SigningID,
+    CDHash,
+    Unknown 
+  };
+  
   enum class State { Whitelist, Blacklist, Unknown };
 
   Type type;
   State state;
-  std::string shasum;
+  std::string identifier;  // SHA256, Team ID, Signing ID, CDHash value
   std::string custom_message;
 };
 
