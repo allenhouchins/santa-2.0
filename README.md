@@ -1,4 +1,4 @@
-# A Refactored Santa
+# A Refactored Santa Extension for osquery
 
  Somehow, this works 🤷🏼🎅🏼🦌
 
@@ -6,8 +6,6 @@ This extension allows osquery to interact with Santa binary authorization system
 
 The extension uses osquery's SDK headers and libraries.
 The extension cannot be built standalone without the osquery source code. The build process integrates with osquery's build system to properly link against the required dependencies and produce a compatible extension binary.
-
-If you don't care about building from scratch and just want the exension to load, that's also in the repo to grab. The most current version, `external_extension_santa_updated_zlib.ext` updated the function for compressed files. This enables `select * from santa_denied;` to pull historical data. Extension built on arm64.
 
 ## Features
 
@@ -65,16 +63,16 @@ cmake ..
 
 4. Build the Claus
 ```
-cmake --build . --target external_extension_santa
+cmake --build . --target santa
 ```
 
 You'll find the built binary at:
-`/src/osquery/build/external/extension_santa/external_extension_santa.ext`
+`/src/osquery/build/external/extension_santa/santa.ext`
 
-To run locally with Fleet, `sudo orbit shell -- --extension external_extension_santa.ext --allow-unsafe`
+To run locally with Fleet, `sudo orbit shell -- --extension santa.ext --allow-unsafe`
 
 or with standard osqueryi:
-`osqueryi --extension=/path/to/external_extension_santa.ext`
+`osqueryi --extension=/path/to/santa.ext`
 
 ## Limitations (Determined to make these work 🧐)
 
