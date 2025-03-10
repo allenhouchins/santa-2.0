@@ -208,7 +208,7 @@ static int rulesCallback(void* context,
 
   // Expected argc/argv format:
   //     identifier,       state,        type, custom_message
-  //     identifier, white/blacklist, binary/cert, arbitrary text
+  //     identifier, white/blacklist,  ruletype, arbitrary text
 
   // clang-format on
 
@@ -217,15 +217,53 @@ static int rulesCallback(void* context,
     return 0;
   }
 
+  // Log what we receive for debugging
+  VLOG(1) << "Rule callback received - identifier: " << (argv[0] ? argv[0] : "NULL") 
+          << ", state: " << (argv[1] ? argv[1] : "NULL")
+          << ", type: " << (argv[2] ? argv[2] : "NULL")
+          << ", message: " << (argv[3] ? argv[3] : "NULL");
+
   RuleEntry new_rule;
   new_rule.identifier = argv[0]; // Using identifier column
   new_rule.state = (argv[1][0] == '1') ? RuleEntry::State::Whitelist
                                        : RuleEntry::State::Blacklist;
 
-  new_rule.type = (argv[2][0] == '1') ? RuleEntry::Type::Binary
-                                      : RuleEntry::Type::Certificate;
+  // Parse the type from the integer value
+  int type_val = argv[2] ? std::atoi(argv[2]) : 0;
+  VLOG(1) << "Rule type value from DB: " << type_val;
+
+  // Map Santa database type values to our enum
+  // Santa's rule database uses these values based on the logs:
+  // 1000: Binary, 2000: Certificate, 3000: SigningID, 4000: TeamID, 500: CDHash
+  switch(type_val) {
+    case 1000:
+      new_rule.type = RuleEntry::Type::Binary;
+      break;
+    case 2000:
+      new_rule.type = RuleEntry::Type::Certificate;
+      break;
+    case 3000:
+      new_rule.type = RuleEntry::Type::SigningID;
+      break;
+    case 4000:
+      new_rule.type = RuleEntry::Type::TeamID;
+      break;
+    case 500:  // CDHash is 500, not 5000 as we initially assumed
+      new_rule.type = RuleEntry::Type::CDHash;
+      break;
+    default:
+      VLOG(1) << "Unknown rule type value: " << type_val;
+      new_rule.type = RuleEntry::Type::Unknown;
+      break;
+  }
 
   new_rule.custom_message = (argv[3] == nullptr) ? "" : argv[3];
+
+  // Print what we've interpreted
+  VLOG(1) << "Interpreted rule - identifier: " << new_rule.identifier
+          << ", state: " << (new_rule.state == RuleEntry::State::Whitelist ? "whitelist" : "blacklist")
+          << ", type: " << getRuleTypeName(new_rule.type)
+          << ", message: " << new_rule.custom_message;
 
   rules->push_back(std::move(new_rule));
   return 0;
@@ -359,6 +397,15 @@ const char* getRuleTypeName(RuleEntry::Type type) {
 
   case RuleEntry::Type::Certificate:
     return "certificate";
+    
+  case RuleEntry::Type::TeamID:
+    return "teamid";
+    
+  case RuleEntry::Type::SigningID:
+    return "signingid";
+    
+  case RuleEntry::Type::CDHash:
+    return "cdhash";
 
   case RuleEntry::Type::Unknown:
   default:
@@ -387,6 +434,12 @@ RuleEntry::Type getTypeFromRuleName(const char* name) {
     return RuleEntry::Type::Certificate;
   } else if (type_name == "binary") {
     return RuleEntry::Type::Binary;
+  } else if (type_name == "teamid") {
+    return RuleEntry::Type::TeamID;
+  } else if (type_name == "signingid") {
+    return RuleEntry::Type::SigningID;
+  } else if (type_name == "cdhash") {
+    return RuleEntry::Type::CDHash;
   } else {
     return RuleEntry::Type::Unknown;
   }

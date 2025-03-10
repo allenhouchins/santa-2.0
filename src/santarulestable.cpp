@@ -22,13 +22,12 @@ RowID generateRowID() {
   return generator++;
 }
 
-std::string generatePrimaryKey(const std::string& identifier, bool is_certificate) {
-  return identifier + "_" + (is_certificate ? "certificate" : "binary");
+std::string generatePrimaryKey(const std::string& identifier, RuleEntry::Type type) {
+  return identifier + "_" + getRuleTypeName(type);
 }
 
 std::string generatePrimaryKey(const RuleEntry& rule) {
-  auto is_certificate = (rule.type == RuleEntry::Type::Certificate);
-  return generatePrimaryKey(rule.identifier, is_certificate);
+  return generatePrimaryKey(rule.identifier, rule.type);
 }
 } // namespace
 
@@ -79,11 +78,46 @@ osquery::Status SantaRulesTablePlugin::GetRowData(
   }
 
   row["identifier"] = document[0].GetString();
-  if (row["identifier"].length() != 64 ||
-      std::string::npos !=
-          row["identifier"].find_first_not_of("0123456789abcdef")) {
-    VLOG(1) << "Invalid identifier: " << row["identifier"];
-    return osquery::Status(1, "Invalid 'identifier' value");
+  
+  // The validation depends on the rule type
+  row["type"] = document[2].GetString();
+  
+  // Perform validation based on rule type
+  if (row["type"] == "binary") {
+    // SHA256 hash must be 64 characters and contain only hexadecimal characters
+    if (row["identifier"].length() != 64 ||
+        std::string::npos != row["identifier"].find_first_not_of("0123456789abcdef")) {
+      VLOG(1) << "Invalid SHA256 identifier: " << row["identifier"];
+      return osquery::Status(1, "Invalid 'identifier' value for binary rule");
+    }
+  } else if (row["type"] == "cdhash") {
+    // CDHash is a hex string (various possible lengths)
+    if (std::string::npos != row["identifier"].find_first_not_of("0123456789abcdef")) {
+      VLOG(1) << "Invalid CDHash identifier: " << row["identifier"];
+      return osquery::Status(1, "Invalid 'identifier' value for cdhash rule");
+    }
+  } else if (row["type"] == "teamid") {
+    // Team ID is typically in the format of XXXXXXXXXX (10 characters)
+    // But we'll allow flexibility since it could be any valid Apple Developer Team ID
+    if (row["identifier"].empty()) {
+      VLOG(1) << "Empty Team ID identifier";
+      return osquery::Status(1, "Invalid 'identifier' value for teamid rule");
+    }
+  } else if (row["type"] == "signingid") {
+    // SigningID should be in the format "TeamID:BundleID"
+    if (row["identifier"].find(':') == std::string::npos || row["identifier"].empty()) {
+      VLOG(1) << "Invalid SigningID format: " << row["identifier"];
+      return osquery::Status(1, "Invalid 'identifier' value for signingid rule, expected format: TeamID:BundleID");
+    }
+  } else if (row["type"] == "certificate") {
+    // Certificate hash is a hex string (allow various lengths)
+    if (std::string::npos != row["identifier"].find_first_not_of("0123456789abcdef")) {
+      VLOG(1) << "Invalid certificate identifier: " << row["identifier"];
+      return osquery::Status(1, "Invalid 'identifier' value for certificate rule - must contain only hex characters");
+    }
+  } else {
+    VLOG(1) << "Invalid rule type: " << row["type"];
+    return osquery::Status(1, "Invalid 'type' value, must be one of: binary, certificate, teamid, signingid, cdhash");
   }
 
   row["state"] = document[1].GetString();
@@ -91,13 +125,7 @@ osquery::Status SantaRulesTablePlugin::GetRowData(
   if (row["state"] != "whitelist" && row["state"] != "blacklist" && 
       row["state"] != "allow" && row["state"] != "block") {
     VLOG(1) << "Invalid state: " << row["state"];
-    return osquery::Status(1, "Invalid 'state' value");
-  }
-
-  row["type"] = document[2].GetString();
-  if (row["type"] != "binary" && row["type"] != "certificate") {
-    VLOG(1) << "Invalid type: " << row["type"];
-    return osquery::Status(1, "Invalid 'type' value");
+    return osquery::Status(1, "Invalid 'state' value, must be one of: whitelist, blacklist, allow, block");
   }
 
   return osquery::Status(0, "OK");
@@ -196,7 +224,7 @@ osquery::QueryData SantaRulesTablePlugin::insert(
 
   // Support both old and new syntax
   bool whitelist = (row["state"] == "whitelist" || row["state"] == "allow");
-  bool certificate = row["type"] == "certificate";
+  const auto& rule_type = row["type"];
   const auto& identifier = row.at("identifier");
   const auto& custom_message = row.at("custom_message");
 
@@ -207,9 +235,9 @@ osquery::QueryData SantaRulesTablePlugin::insert(
   VLOG(1) << "Running santactl command with args: " 
           << "rule " 
           << state_arg
-          << " --sha256 " << identifier
-          << " --message \"" << custom_message << "\"" 
-          << (certificate ? " --certificate" : "");
+          << " --identifier " << identifier
+          << (rule_type != "binary" ? " --" + rule_type : "")
+          << " --message \"" << custom_message << "\"";
 
   // Check if santactl exists before trying to execute it
   std::ifstream santactl_check(kSantactlPath);
@@ -219,21 +247,38 @@ osquery::QueryData SantaRulesTablePlugin::insert(
              std::make_pair("message", "santactl not found")}};
   }
 
-  // Build command for santactl using the newer --allow/--block syntax
+  // Build command for santactl based on rule type
   std::vector<std::string> santactl_args = {
       "rule",
-      state_arg,  // Use --allow or --block instead of --whitelist/--blacklist
-      "--sha256",
-      identifier};
+      state_arg  // Use --allow or --block
+  };
+  
+  // Add the appropriate identifier and rule type arguments
+  if (rule_type == "binary") {
+      santactl_args.push_back("--identifier");
+      santactl_args.push_back(identifier);
+  } else if (rule_type == "certificate") {
+      santactl_args.push_back("--identifier");
+      santactl_args.push_back(identifier);
+      santactl_args.push_back("--certificate");
+  } else if (rule_type == "teamid") {
+      santactl_args.push_back("--identifier");
+      santactl_args.push_back(identifier);
+      santactl_args.push_back("--teamid");
+  } else if (rule_type == "signingid") {
+      santactl_args.push_back("--identifier");
+      santactl_args.push_back(identifier);
+      santactl_args.push_back("--signingid");
+  } else if (rule_type == "cdhash") {
+      santactl_args.push_back("--identifier");
+      santactl_args.push_back(identifier);
+      santactl_args.push_back("--cdhash");
+  }
   
   // Only add message argument if it's not empty
   if (!custom_message.empty()) {
     santactl_args.push_back("--message");
     santactl_args.push_back(custom_message);
-  }
-
-  if (certificate) {
-    santactl_args.push_back("--certificate");
   }
 
   // Execute the santactl command
@@ -265,7 +310,10 @@ osquery::QueryData SantaRulesTablePlugin::insert(
   // Try to find the rule we just added
   bool rule_found = false;
   RowID row_id = 0U;
-  auto primary_key = generatePrimaryKey(identifier, certificate);
+  
+  // Convert rule type string to enum
+  RuleEntry::Type enum_type = getTypeFromRuleName(rule_type.c_str());
+  auto primary_key = generatePrimaryKey(identifier, enum_type);
 
   for (const auto& rowid_pkey_pair : d->rowid_to_pkey) {
     const auto& rowid = rowid_pkey_pair.first;
@@ -282,7 +330,7 @@ osquery::QueryData SantaRulesTablePlugin::insert(
     }
 
     const auto& rule = rule_it->second;
-    if (rule.type != getTypeFromRuleName(row["type"].data())) {
+    if (rule.type != enum_type) {
       continue;
     }
 
@@ -307,7 +355,7 @@ osquery::QueryData SantaRulesTablePlugin::insert(
     // Create a synthetic rule entry
     RuleEntry new_rule;
     new_rule.identifier = identifier;
-    new_rule.type = getTypeFromRuleName(row["type"].data());
+    new_rule.type = enum_type;
     new_rule.state = getStateFromRuleName(row["state"].data());
     new_rule.custom_message = custom_message;
     
@@ -361,11 +409,46 @@ osquery::QueryData SantaRulesTablePlugin::delete_(
   }
 
   const auto& rule = rule_it->second;
+  
+  // Build command arguments based on rule type
   std::vector<std::string> santactl_args = {
-      "rule", "--remove", "--sha256", rule.identifier};
-
-  if (rule.type == RuleEntry::Type::Certificate) {
-    santactl_args.push_back("--certificate");
+      "rule", "--remove"
+  };
+  
+  // Add the appropriate identifier and rule type arguments
+  switch (rule.type) {
+      case RuleEntry::Type::Binary:
+          santactl_args.push_back("--identifier");
+          santactl_args.push_back(rule.identifier);
+          break;
+          
+      case RuleEntry::Type::Certificate:
+          santactl_args.push_back("--identifier");
+          santactl_args.push_back(rule.identifier);
+          santactl_args.push_back("--certificate");
+          break;
+          
+      case RuleEntry::Type::TeamID:
+          santactl_args.push_back("--identifier");
+          santactl_args.push_back(rule.identifier);
+          santactl_args.push_back("--teamid");
+          break;
+          
+      case RuleEntry::Type::SigningID:
+          santactl_args.push_back("--identifier");
+          santactl_args.push_back(rule.identifier);
+          santactl_args.push_back("--signingid");
+          break;
+          
+      case RuleEntry::Type::CDHash:
+          santactl_args.push_back("--identifier");
+          santactl_args.push_back(rule.identifier);
+          santactl_args.push_back("--cdhash");
+          break;
+          
+      default:
+          VLOG(1) << "Unknown rule type: " << static_cast<int>(rule.type);
+          return {{std::make_pair("status", "failure")}};
   }
 
   // The santactl command always succeeds, even if the rule does not exist.
