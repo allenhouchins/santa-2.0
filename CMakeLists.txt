@@ -14,15 +14,15 @@ set(SOURCES
 )
 
 # Add the extension using osquery's extension macro
-addOsqueryExtension(external_extension_santa ${SOURCES})
+addOsqueryExtension(santa ${SOURCES})
 
 # Add any required include directories
-target_include_directories(external_extension_santa PRIVATE
+target_include_directories(santa PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
 # Link with required libraries - osquery already includes zlib
-target_link_libraries(external_extension_santa PRIVATE
+target_link_libraries(santa PRIVATE
   thirdparty_boost
   thirdparty_zlib
 )
