@@ -3,8 +3,6 @@ name: Build Santa Extension
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -45,10 +43,10 @@ jobs:
           # Build
           mkdir -p build && cd build
           cmake ..
-          cmake --build . --target external_extension_santa -j3
+          cmake --build . --target santa -j3
 
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4
         with:
           name: santa-extension
-          path: osquery/build/external/extension_santa/external_extension_santa.ext
+          path: osquery/build/external/extension_santa/santa.ext
