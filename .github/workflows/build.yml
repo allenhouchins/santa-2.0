@@ -1,8 +1,8 @@
 name: Build Santa Extension
 
 on:
-  push:
-    branches: [ main ]
+  #push:
+  #  branches: [ main ] disabling for now - only runs on manual trigger
   workflow_dispatch:
 
 jobs:
@@ -11,17 +11,47 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          path: extension_santa
+          path: osquery-santa-extension
 
+      # Cache Homebrew packages
+      - name: Cache Homebrew packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            /opt/homebrew/Cellar
+          key: ${{ runner.os }}-brew-${{ hashFiles('osquery/.github/workflows/*') }}
+          restore-keys: |
+            ${{ runner.os }}-brew-
+
+      # Cache osquery repository
+      - name: Cache osquery repository
+        id: cache-osquery
+        uses: actions/cache@v3
+        with:
+          path: osquery
+          key: ${{ runner.os }}-osquery-repo-${{ hashFiles('osquery-santa-extension/src/*', 'osquery-santa-extension/CMakeLists.txt') }}
+
+      # Clone osquery if not cached
       - name: Clone osquery repository
+        if: steps.cache-osquery.outputs.cache-hit != 'true'
         run: |
           git clone https://github.com/osquery/osquery.git
+
+      # Cache osquery build directory cuz there is a lot here
+      - name: Cache osquery build
+        uses: actions/cache@v3
+        with:
+          path: osquery/build
+          key: ${{ runner.os }}-osquery-build-${{ hashFiles('osquery-santa-extension/src/*', 'osquery-santa-extension/CMakeLists.txt', 'osquery/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-osquery-build-
 
       - name: Setup extension in osquery
         run: |
           mkdir -p osquery/external/extension_santa/src
-          cp -r extension_santa/src/* osquery/external/extension_santa/src/
-          cp extension_santa/CMakeLists.txt osquery/external/extension_santa/
+          cp -r osquery-santa-extension/src/* osquery/external/extension_santa/src/
+          cp osquery-santa-extension/CMakeLists.txt osquery/external/extension_santa/
 
       - name: Install dependencies
         run: |
@@ -32,9 +62,11 @@ jobs:
           source venv/bin/activate
           pip install setuptools pyyaml
 
+      # Will take a good chunk of time on first build, or if not cached
       - name: Build extension
         run: |
           cd osquery
+          # Activate the virtual environment
           source venv/bin/activate
           # Set environment variables for zlib
           export LDFLAGS="-L/opt/homebrew/opt/zlib/lib"
@@ -44,9 +76,34 @@ jobs:
           mkdir -p build && cd build
           cmake ..
           cmake --build . --target santa -j3
-
-      - name: Upload extension artifact
-        uses: actions/upload-artifact@v4
+          
+      # Save the extension binary as an artifact, nice to have, not required. Consider removing this?
+      - name: Save extension artifact
+        uses: actions/upload-artifact@v3
         with:
           name: santa-extension
           path: osquery/build/external/extension_santa/santa.ext
+          
+      # Copy extension to root for release - makes accessible to the GitHub Release action with a simple path at root
+      - name: Prepare extension for release
+        run: |
+          cp osquery/build/external/extension_santa/santa.ext ./santa_arm64.ext
+          
+      # Get current date for release naming
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          
+      # Create or update "latest" GitHub release, not messing with version tagging 
+      - name: Update Latest Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: "Latest Build (${{ steps.date.outputs.date }})"
+          files: |
+            santa_arm64.ext
+          draft: false
+          prerelease: false
+          body: "This is the latest build of the Santa extension for osquery, built on ${{ steps.date.outputs.date }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
