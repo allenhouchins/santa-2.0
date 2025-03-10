@@ -79,3 +79,17 @@ or with standard osqueryi:
 ## Limitations (Determined to make these work 🧐)
 
 - The extension can read Santa rules, but modifying rules through the extension has limitations due to how Santa locks its database
+
+## Modifications from Original Code
+
+This repository contains a modified version of the Santa extension for osquery originally developed by Trail of Bits, Inc. (https://github.com/trailofbits/osquery-extensions).
+
+Key modifications include:
+- Removed dependency on boost::iostreams, replacing gzip handling with zlib
+- Removed dependency on boost::process, replacing popen-based implementation
+- Updated SQL queries to work with newer Santa database schema
+- Added a main.cpp entry point - proper entry point file that registers the extension tables with osquery
+- Fixed table registration - Added the proper REGISTER_EXTERNAL macros
+- Added debugging and logging (may be removed at some point)
+
+All modifications maintain the original Apache 2.0 license.
