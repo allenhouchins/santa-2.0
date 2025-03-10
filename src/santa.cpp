@@ -1,19 +1,3 @@
-/*
- * Copyright (c) 2018 Trail of Bits, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "santa.h"
 
 #include <fstream>
@@ -241,30 +225,37 @@ static int rulesCallback(void* context,
 
   RuleEntry new_rule;
   new_rule.identifier = argv[0]; // Using identifier column
-  new_rule.state = (argv[1][0] == '1') ? RuleEntry::State::Whitelist
-                                       : RuleEntry::State::Blacklist;
+  
+  // Parse state - 1 = whitelist, 2 = blacklist
+  new_rule.state = (argv[1] && argv[1][0] == '1') ? RuleEntry::State::Whitelist
+                                                  : RuleEntry::State::Blacklist;
 
   // Parse the type from the integer value
   int type_val = argv[2] ? std::atoi(argv[2]) : 0;
   VLOG(1) << "Rule type value from DB: " << type_val;
 
   // Map Santa database type values to our enum
-  // Santa's rule database uses these values based on the logs:
-  // 1000: Binary, 2000: Certificate, 3000: SigningID, 4000: TeamID, 500: CDHash
+  // Santa's rule database uses these values:
+  // Correct mapping based on Santa's database schema:
+  // 1000: Binary
+  // 2000: SigningID (not Certificate as previously thought)
+  // 3000: Certificate (not SigningID as previously thought)
+  // 4000: TeamID
+  // 500: CDHash
   switch(type_val) {
     case 1000:
       new_rule.type = RuleEntry::Type::Binary;
       break;
     case 2000:
-      new_rule.type = RuleEntry::Type::Certificate;
+      new_rule.type = RuleEntry::Type::SigningID;  // FIXED: This was incorrectly mapped to Certificate
       break;
     case 3000:
-      new_rule.type = RuleEntry::Type::SigningID;
+      new_rule.type = RuleEntry::Type::Certificate;  // FIXED: This was incorrectly mapped to SigningID
       break;
     case 4000:
       new_rule.type = RuleEntry::Type::TeamID;
       break;
-    case 500:  // CDHash is 500, not 5000 as we initially assumed
+    case 500:  // CDHash is 500, not 5000
       new_rule.type = RuleEntry::Type::CDHash;
       break;
     default:
